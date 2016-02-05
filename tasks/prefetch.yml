@@ -1,0 +1,7 @@
+---
+
+- name: prefetch {{ role_name }} docker images
+  docker-compose:
+    role: "{{ role_name }}"
+    data: "{{ compose_data }}"
+    images: latest

@@ -1,0 +1,9 @@
+---
+
+galaxy_info:
+  author: Location Labs
+  description: Install docker-composable base role
+  licence: Apache v2.0
+  min_ansible_version: 1.8.4
+dependencies: []
+allow_duplicates: yes

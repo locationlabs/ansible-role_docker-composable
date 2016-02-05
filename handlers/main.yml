@@ -1,0 +1,7 @@
+---
+
+- name: restart {{ role_name }}
+  docker-compose:
+    role: "{{ role_name }}"
+    data: "{{ compose_data }}"
+    containers: restarted

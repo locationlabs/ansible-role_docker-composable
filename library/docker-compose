@@ -1,0 +1,222 @@
+#!/usr/bin/python
+"""
+Ansible module for interacting with the `docker-compose` binary.
+
+Check mode is supported to the extent that changes will not be made,
+but not so much that expected changes are computed.
+
+Failure detection is based largely on return codes and should be
+reliable. Change detection is based largely on string matching and
+may be fragile to future changes in docker-compose.
+"""
+
+DOCUMENTATION = """
+---
+module: docker-compose
+short_description: manage docker compose
+description:
+   - Start, stop, and remove Docker container using docker-compose
+     Check mode is supported to the extent that changes will not be made,
+     but not so much that expected changes are computed.
+requirements:
+   - docker-compose
+options:
+    path:
+        description:
+            - Path to docker-compose.yml (or its directory)
+        required: true
+    state:
+        description:
+            - Desired state of the containers.
+            - Choices include absent, started, and stopped.
+        default: started
+        required: false
+    binary:
+        description:
+            - Path to docker-compose binary
+        default: /usr/local/bin/docker-compose
+        required: false
+    force:
+        description:
+            - Should containers be forcibly removed or (re)started?
+        default: false
+        required: false
+"""
+
+EXAMPLES = """
+- docker-compose: state=started path=/etc/docker-compose/foo/docker-compose.yml
+
+- docker-compose: state=absent path=/etc/docker-compose/bar
+"""
+from os import chdir
+from os.path import dirname, exists, isdir
+
+
+def make_result(failed, changed, msg, **kwargs):
+    """
+    Generate a default response for this module.
+
+    Includes `failed`, `changed`, and `msg`.
+    """
+    return dict(failed=failed, changed=changed, msg=msg, **kwargs)
+
+
+def _did_fail(rc):
+    """
+    Did docker-compose fail?
+    """
+    return rc != 0
+
+
+def _did_stop(out, err):
+    """
+    Did docker-compose stop something?
+    """
+    return "Stopping" in out
+
+
+def _did_remove(out, err):
+    """
+    Did docker-compose remove something?
+    """
+    return "Removing" in out
+
+
+def _did_start(out, err):
+    """
+    Did docker-compose start something?
+    """
+    return "up-to-date" not in err
+
+
+def make_stopped(module):
+    """
+    Ensure that containers are stopped.
+    """
+    args = [module.params["binary"], "stop"]
+
+    rc, out, err = module.run_command(args)
+    return make_result(
+        failed=_did_fail(rc),
+        changed=_did_stop(out, err),
+        msg=out,
+    )
+
+
+def make_absent(module):
+    """
+    Ensure that containers are removed.
+    """
+    result = make_stopped(module)
+
+    if result["failed"]:
+        return result
+
+    if module.params["force"]:
+        args = [module.params["binary"], "rm", "-f"]
+    else:
+        args = [module.params["binary"], "rm"]
+
+    for _ in range(2):
+        rc, out, err = module.run_command(args)
+        # retry on already joined error
+        if not _did_fail(rc) or "container has already joined the endpoint" not in err:
+            break
+    return make_result(
+        failed=_did_fail(rc),
+        changed=result["changed"] or _did_remove(out, err),
+        msg=out,
+    )
+
+
+def make_started(module):
+    """
+    Ensure that containers are running.
+    """
+    if module.params["force"]:
+        # For some reason docker-compose with Docker 1.9 fails to recreate if we don't stop first.
+        make_stopped(module)
+        args = [module.params["binary"], "up", "-d", "--force-recreate"]
+    else:
+        args = [module.params["binary"], "up", "-d"]
+
+    for _ in range(2):
+        rc, out, err = module.run_command(args)
+        # retry on already joined error
+        if not _did_fail(rc) or "container has already joined the endpoint" not in err:
+            break
+    return make_result(
+        failed=_did_fail(rc),
+        changed=_did_start(out, err),
+        msg=err,
+    )
+
+
+def main():
+    """
+    Module entry point.
+    """
+    module = AnsibleModule(
+        argument_spec=dict(
+            state=dict(required=False, default="started", choices=[
+                "absent",
+                "started",
+                "stopped",
+            ]),
+            path=dict(required=True),
+            binary=dict(required=False, default="/usr/local/bin/docker-compose"),
+            force=dict(required=False, default=False, type="bool"),
+        ),
+        supports_check_mode=True
+    )
+
+    path = module.params["path"]
+    state = module.params["state"]
+    binary = module.params["binary"]
+ 
+    if not exists(path):
+        # path must exist
+        result = make_result(
+            failed=True,
+            changed=False,
+            msg="{} does not exist".format(path),
+        )
+    elif not exists(binary):
+        # binary must exist
+        result = make_result(
+            failed=True,
+            changed=False,
+            msg="{} does not exist; try `pip install docker-compose`".format(binary),
+        )
+    else:
+        # must run docker-compose from the correct directory
+        if isdir(path):
+            chdir(path)
+        else:
+            chdir(dirname(path))
+
+        if module.check_mode:
+            result = make_result(failed=False, changed=False, msg="ok")
+        elif state == "absent":
+            result = make_absent(module)
+        elif state == "started":
+            result = make_started(module)
+        elif state == "stopped":
+            result = make_stopped(module)
+        else:
+            # should not be possible
+            result = make_result(
+                failed=True,
+                changed=False,
+                msg="{} is not supported".format(state),
+            )
+
+    if result["failed"]:
+        module.fail_json(**result)
+    else:
+        module.exit_json(**result)
+
+
+from ansible.module_utils.basic import *  # noqa
+if __name__ == '__main__':
+    main()

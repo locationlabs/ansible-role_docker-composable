@@ -1,0 +1,11 @@
+---
+
+- include: install.yml
+  when: deploy_mode == 'install' and deploy_mode not in deploy_mode_overrides
+
+- include: purge.yml
+  when: deploy_mode == 'purge' and deploy_mode not in deploy_mode_overrides
+
+- include: prefetch.yml
+  when: deploy_mode == 'prefetch' and deploy_mode not in deploy_mode_overrides
+

@@ -1,0 +1,8 @@
+---
+
+- name: install {{ role_name }} with docker-compose
+  docker-compose:
+    role: "{{ role_name }}"
+    data: "{{ compose_data }}"
+    images: latest
+    containers: started
